@@ -1,21 +1,6 @@
 {
   "version": 2,
-  "builds": [
-    {
-      "src": "src/webhook.js",
-      "use": "@vercel/node"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "src/webhook.js"
-    }
-  ],
-  "env": {
-    "LINE_CHANNEL_ID": "@line_channel_id",
-    "LINE_CHANNEL_ACCESS_TOKEN": "@line_channel_access_token",
-    "LINE_WEBHOOK_SECRET": "@line_webhook_secret",
-    "PORT": "3000"
+  "github": {
+    "protected": false
   }
 }

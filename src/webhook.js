@@ -68,7 +68,9 @@ async function handler(req, res) {
   }
 
   // Webhook リクエスト処理
-  if (req.method === 'POST' && req.url === '/webhook') {
+  // Vercel では req.url に query string が含まれる可能性があるので path を抽出
+  const pathname = req.url?.split('?')[0] || '/';
+  if (req.method === 'POST' && (pathname === '/webhook' || pathname === '/' || pathname === '')) {
     const signature = req.headers['x-line-signature'];
     let body = req.body;
 

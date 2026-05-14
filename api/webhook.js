@@ -1,100 +1,153 @@
-const crypto = require('crypto')
+const crypto = require('crypto');
+const LineClient = require('../src/lineClient');
+const DataAnalyzer = require('../src/dataAnalyzer');
 
-const messageStore = []
+const client = new LineClient(process.env.LINE_CHANNEL_ACCESS_TOKEN);
+const analyzer = new DataAnalyzer();
 
+// Webhook署名の検証
 function validateSignature(body, signature) {
-  const secret = process.env.LINE_WEBHOOK_SECRET || ''
-  const hash = crypto.createHmac('sha256', secret).update(body).digest('base64')
-  return hash === signature
+  let bodyStr;
+  if (typeof body === 'string') {
+    bodyStr = body;
+  } else if (Buffer.isBuffer(body)) {
+    bodyStr = body.toString('utf-8');
+  } else {
+    bodyStr = JSON.stringify(body);
+  }
+  const hash = crypto
+    .createHmac('sha256', process.env.LINE_WEBHOOK_SECRET)
+    .update(bodyStr)
+    .digest('base64');
+  return hash === signature;
 }
 
+// LINE メッセージ送信
 async function sendMessage(userId, text) {
-  const token = process.env.LINE_CHANNEL_ACCESS_TOKEN
-  if (!token) {
-    console.error('[ERROR] LINE_CHANNEL_ACCESS_TOKEN not set')
-    return
-  }
-
   try {
-    const response = await fetch('https://api.line.me/v2/bot/message/push', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({
-        to: userId,
-        messages: [{ type: 'text', text }],
-      }),
-    })
-
-    if (!response.ok) {
-      console.error(`[ERROR] Failed to send: ${response.status}`)
-    }
+    await client.sendTextMessage(userId, text);
   } catch (error) {
-    console.error('[ERROR]', error.message)
+    console.error('メッセージ送信エラー:', error.message);
   }
 }
 
-module.exports = async (req, res) => {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method Not Allowed' })
+// Vercel API route handler
+export default async function handler(req, res) {
+  // CORS ヘッダー
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Line-Signature');
+
+  // OPTIONS リクエスト対応
+  if (req.method === 'OPTIONS') {
+    res.status(200).end();
+    return;
   }
 
-  console.log('[WEBHOOK] Received')
+  // GET リクエスト対応（ヘルスチェック）
+  if (req.method === 'GET') {
+    res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+    return;
+  }
 
-  // 即座に 200 OK を返す
-  res.status(200).json({ status: 'ok' })
+  // POST リクエスト - Webhook処理
+  if (req.method === 'POST') {
+    const signature = req.headers['x-line-signature'];
+    let body = req.body;
 
-  // イベント処理を非同期で実行
-  try {
-    const events = req.body.events || []
-
-    for (const event of events) {
-      if (event.type === 'message' && event.message?.type === 'text') {
-        const userId = event.source.userId
-        const text = event.message.text
-
-        messageStore.push({ userId, text, timestamp: new Date() })
-
-        let reply = ''
-        if (text.includes('統計') || text.includes('分析')) {
-          reply = `[STATS] 統計:\n送信数: ${messageStore.length}\nユーザー: ${new Set(messageStore.map((m) => m.userId)).size}`
-        } else if (text.includes('ヘルプ')) {
-          reply = '[HELP] コマンド:\n- "統計": 統計表示\n- "リセット": データ削除'
-        } else if (text.includes('リセット')) {
-          messageStore.length = 0
-          reply = '[OK] データをリセットしました'
-        } else {
-          reply = `[OK] "${text}" をありがとうございます`
-        }
-
-        await sendMessage(userId, reply)
-      } else if (event.type === 'postback') {
-        const userId = event.source.userId
-        const postbackData = event.postback.data
-        const params = new URLSearchParams(postbackData)
-        const action = params.get('action')
-
-        let reply = ''
-        if (action === 'yes') {
-          reply = '[OK] ご協力ありがとうございます'
-        } else if (action === 'no') {
-          reply = '[INFO] 「いいえ」を選択されました'
-        } else if (action === 'save') {
-          reply = '[OK] データを保存しました'
-        } else if (action === 'cancel') {
-          reply = '[CANCEL] 処理をキャンセルしました'
-        }
-
-        messageStore.push({ userId, text: action || postbackData, timestamp: new Date() })
-        if (reply) await sendMessage(userId, reply)
-      } else if (event.type === 'follow') {
-        const userId = event.source.userId
-        await sendMessage(userId, 'ようこそ！LINE API ボットです')
-      }
+    // req.body は Vercel で既に JSON パースされているため、文字列に変換
+    if (typeof body === 'object') {
+      body = JSON.stringify(body);
+    } else if (!body) {
+      body = '';
     }
-  } catch (error) {
-    console.error('[ERROR]', error)
+
+    // 署名検証
+    if (!validateSignature(body, signature)) {
+      console.warn('❌ 無効な署名です');
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    try {
+      const events = JSON.parse(body).events || [];
+
+      // 即座に 200 OK を返す
+      res.status(200).json({ status: 'ok' });
+
+      // イベント処理は非同期で実行
+      (async () => {
+        for (const event of events) {
+          console.log('\n📩 イベント受信:', event.type);
+
+          if (event.type === 'message' && event.message?.type === 'text') {
+            const userId = event.source.userId;
+            const userMessage = event.message.text;
+
+            console.log(`ユーザー: ${userId}`);
+            console.log(`メッセージ: ${userMessage}`);
+
+            analyzer.recordMessage(userId, userMessage);
+
+            let reply = '';
+            if (userMessage.includes('統計') || userMessage.includes('分析')) {
+              const summary = analyzer.getSummary();
+              reply = `[STATS] 統計情報:\n総メッセージ数: ${summary.totalMessages}\nユーザー数: ${summary.uniqueUsers}\n総文字数: ${summary.totalLength}`;
+            } else if (userMessage.includes('ヘルプ')) {
+              reply = `[HELP] 利用可能なコマンド:\n- "統計" : メッセージ統計を表示\n- "リセット" : データをリセット`;
+            } else if (userMessage.includes('リセット')) {
+              analyzer.reset();
+              reply = '[OK] データをリセットしました';
+            } else {
+              reply = `[OK] "${userMessage}"というメッセージをありがとうございます！`;
+            }
+
+            if (reply) await sendMessage(userId, reply);
+
+          } else if (event.type === 'postback') {
+            const userId = event.source.userId;
+            const postbackData = event.postback.data;
+
+            console.log(`ユーザー: ${userId}`);
+            console.log(`ボタン応答データ: ${postbackData}`);
+
+            const params = new URLSearchParams(postbackData);
+            const action = params.get('action');
+
+            let reply = '';
+            if (action === 'yes') {
+              analyzer.recordMessage(userId, 'はい');
+              reply = '[OK] ご協力ありがとうございます！「はい」を選択されました。';
+            } else if (action === 'no') {
+              analyzer.recordMessage(userId, 'いいえ');
+              reply = '[INFO] 「いいえ」を選択されました。';
+            } else if (action === 'save') {
+              analyzer.recordMessage(userId, '保存');
+              reply = '[OK] データを保存しました';
+            } else if (action === 'cancel') {
+              analyzer.recordMessage(userId, 'キャンセル');
+              reply = '[CANCEL] 処理をキャンセルしました';
+            }
+
+            if (reply) await sendMessage(userId, reply);
+
+          } else if (event.type === 'follow') {
+            const userId = event.source.userId;
+            console.log(`ユーザーがフォローしました: ${userId}`);
+            await sendMessage(userId, 'ようこそ！このボットはLINE Messaging APIのテストプログラムです。');
+          }
+        }
+      })().catch((error) => {
+        console.error('イベント処理エラー:', error);
+      });
+
+    } catch (error) {
+      console.error('❌ エラーが発生しました:', error);
+      res.status(500).json({ error: 'Internal Server Error' });
+    }
+    return;
   }
+
+  // その他のリクエスト
+  res.status(404).json({ error: 'Not Found' });
 }
