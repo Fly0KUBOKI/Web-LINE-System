@@ -1,9 +1,4 @@
 const crypto = require('crypto');
-const LineClient = require('../src/lineClient');
-const DataAnalyzer = require('../src/dataAnalyzer');
-
-const client = new LineClient(process.env.LINE_CHANNEL_ACCESS_TOKEN);
-const analyzer = new DataAnalyzer();
 
 // Webhook署名の検証
 function validateSignature(body, signature) {
@@ -25,14 +20,37 @@ function validateSignature(body, signature) {
 // LINE メッセージ送信
 async function sendMessage(userId, text) {
   try {
-    await client.sendTextMessage(userId, text);
+    const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+    if (!token) {
+      console.error('[ERROR] LINE_CHANNEL_ACCESS_TOKEN not set');
+      return;
+    }
+
+    const response = await fetch('https://api.line.me/v2/bot/message/push', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        to: userId,
+        messages: [{ type: 'text', text }],
+      }),
+    });
+
+    if (!response.ok) {
+      console.error(`[ERROR] Failed to send: ${response.status}`);
+    }
   } catch (error) {
     console.error('メッセージ送信エラー:', error.message);
   }
 }
 
+// シンプルなメッセージストア（本番環境では適切なDBを使用してください）
+const messageStore = [];
+
 // Vercel API route handler
-export default async function handler(req, res) {
+module.exports = async (req, res) => {
   // CORS ヘッダー
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
@@ -62,6 +80,8 @@ export default async function handler(req, res) {
       body = '';
     }
 
+    console.log(`[WEBHOOK] Received request, signature check...`);
+
     // 署名検証
     if (!validateSignature(body, signature)) {
       console.warn('❌ 無効な署名です');
@@ -87,16 +107,17 @@ export default async function handler(req, res) {
             console.log(`ユーザー: ${userId}`);
             console.log(`メッセージ: ${userMessage}`);
 
-            analyzer.recordMessage(userId, userMessage);
+            messageStore.push({ userId, text: userMessage, timestamp: new Date() });
 
             let reply = '';
             if (userMessage.includes('統計') || userMessage.includes('分析')) {
-              const summary = analyzer.getSummary();
-              reply = `[STATS] 統計情報:\n総メッセージ数: ${summary.totalMessages}\nユーザー数: ${summary.uniqueUsers}\n総文字数: ${summary.totalLength}`;
+              const uniqueUsers = new Set(messageStore.map(m => m.userId)).size;
+              const totalLength = messageStore.reduce((sum, m) => sum + m.text.length, 0);
+              reply = `[STATS] 統計情報:\n総メッセージ数: ${messageStore.length}\nユーザー数: ${uniqueUsers}\n総文字数: ${totalLength}`;
             } else if (userMessage.includes('ヘルプ')) {
               reply = `[HELP] 利用可能なコマンド:\n- "統計" : メッセージ統計を表示\n- "リセット" : データをリセット`;
             } else if (userMessage.includes('リセット')) {
-              analyzer.reset();
+              messageStore.length = 0;
               reply = '[OK] データをリセットしました';
             } else {
               reply = `[OK] "${userMessage}"というメッセージをありがとうございます！`;
@@ -116,16 +137,16 @@ export default async function handler(req, res) {
 
             let reply = '';
             if (action === 'yes') {
-              analyzer.recordMessage(userId, 'はい');
+              messageStore.push({ userId, text: 'はい', timestamp: new Date() });
               reply = '[OK] ご協力ありがとうございます！「はい」を選択されました。';
             } else if (action === 'no') {
-              analyzer.recordMessage(userId, 'いいえ');
+              messageStore.push({ userId, text: 'いいえ', timestamp: new Date() });
               reply = '[INFO] 「いいえ」を選択されました。';
             } else if (action === 'save') {
-              analyzer.recordMessage(userId, '保存');
+              messageStore.push({ userId, text: '保存', timestamp: new Date() });
               reply = '[OK] データを保存しました';
             } else if (action === 'cancel') {
-              analyzer.recordMessage(userId, 'キャンセル');
+              messageStore.push({ userId, text: 'キャンセル', timestamp: new Date() });
               reply = '[CANCEL] 処理をキャンセルしました';
             }
 
@@ -150,4 +171,4 @@ export default async function handler(req, res) {
 
   // その他のリクエスト
   res.status(404).json({ error: 'Not Found' });
-}
+};
