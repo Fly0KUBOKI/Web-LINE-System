@@ -1,0 +1,45 @@
+services:
+  # Node.js: LINEウェブフック受信サーバー
+  line-webhook:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    ports:
+      - "3000:3000"
+    container_name: line-webhook-server
+    volumes:
+      - ./src:/app/src
+      - ./logs:/app/logs
+    command: npm run webhook
+    restart: unless-stopped
+
+  # Python: データ解析・スクリプト実行
+  line-python:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    env_file:
+      - .env
+    container_name: line-python
+    volumes:
+      - .:/app
+    command: python data_analyzer.py
+    profiles:
+      - python
+
+  # Node.js: テスト実行用（通常は使わない）
+  line-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    container_name: line-api-test
+    volumes:
+      - ./src:/app/src
+      - ./logs:/app/logs
+    command: npm test
+    profiles:
+      - test
