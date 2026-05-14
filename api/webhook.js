@@ -1,4 +1,67 @@
 const crypto = require('crypto');
+const { google } = require('googleapis');
+
+let sheetsClient = null;
+
+async function initializeSheets() {
+  if (sheetsClient) return sheetsClient;
+
+  try {
+    const serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON || '{}');
+
+    if (!serviceAccount.type) {
+      console.warn('[SHEETS] Service account not configured');
+      return null;
+    }
+
+    const auth = new google.auth.GoogleAuth({
+      credentials: serviceAccount,
+      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+    });
+
+    sheetsClient = google.sheets({ version: 'v4', auth });
+    console.log('[SHEETS] Initialized successfully');
+    return sheetsClient;
+  } catch (error) {
+    console.error('[SHEETS] Initialization error:', error.message);
+    return null;
+  }
+}
+
+async function addMessageToSheets(userId, text, messageType = 'text') {
+  try {
+    const sheets = await initializeSheets();
+    if (!sheets) {
+      console.warn('[SHEETS] Sheets not initialized');
+      return false;
+    }
+
+    const sheetId = process.env.GOOGLE_SHEETS_ID;
+    if (!sheetId) {
+      console.warn('[SHEETS] GOOGLE_SHEETS_ID not set');
+      return false;
+    }
+
+    const timestamp = new Date().toLocaleString('ja-JP', {
+      timeZone: 'Asia/Tokyo',
+    });
+
+    const values = [[timestamp, userId, messageType, text]];
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: sheetId,
+      range: 'Sheet1!A:D',
+      valueInputOption: 'USER_ENTERED',
+      resource: { values },
+    });
+
+    console.log(`[SHEETS] Message recorded: ${userId} - ${text}`);
+    return true;
+  } catch (error) {
+    console.error('[SHEETS] Error adding message:', error.message);
+    return false;
+  }
+}
 
 // Webhook署名の検証
 function validateSignature(body, signature) {
@@ -46,37 +109,6 @@ async function sendMessage(userId, text) {
   }
 }
 
-// メッセージストア（複数の API 間で共有）
-// NOTE: 本番環境ではこのメモリベースのストアではなく、データベースを使用してください
-const messageStore = {
-  messages: [],
-  getStats: function() {
-    const totalMessages = this.messages.length;
-    const uniqueUsers = new Set(this.messages.map(m => m.userId)).size;
-    const totalLength = this.messages.reduce((sum, m) => sum + m.text.length, 0);
-    const averageLength = totalMessages > 0 ? Math.round(totalLength / totalMessages * 10) / 10 : 0;
-
-    const userStats = [];
-    this.messages.forEach(msg => {
-      let userStat = userStats.find(u => u.userId === msg.userId);
-      if (!userStat) {
-        userStat = {
-          userId: msg.userId,
-          messageCount: 0,
-          messages: []
-        };
-        userStats.push(userStat);
-      }
-      userStat.messageCount++;
-      userStat.messages.push({
-        text: msg.text,
-        timestamp: msg.timestamp
-      });
-    });
-
-    return { totalMessages, uniqueUsers, totalLength, averageLength, userStats };
-  }
-};
 
 // Vercel API route handler
 module.exports = async (req, res) => {
@@ -149,21 +181,13 @@ module.exports = async (req, res) => {
             console.log(`ユーザー: ${userId}`);
             console.log(`メッセージ: ${userMessage}`);
 
-            messageStore.messages.push({
-              userId,
-              text: userMessage,
-              timestamp: new Date().toISOString()
-            });
+            await addMessageToSheets(userId, userMessage, 'text');
 
             let reply = '';
             if (userMessage.includes('統計') || userMessage.includes('分析')) {
-              const stats = messageStore.getStats();
-              reply = `[STATS] 統計情報:\n総メッセージ数: ${stats.totalMessages}\nユーザー数: ${stats.uniqueUsers}\n総文字数: ${stats.totalLength}`;
+              reply = `[STATS] 統計情報はダッシュボードで確認できます。`;
             } else if (userMessage.includes('ヘルプ')) {
-              reply = `[HELP] 利用可能なコマンド:\n- "統計" : メッセージ統計を表示\n- "リセット" : データをリセット`;
-            } else if (userMessage.includes('リセット')) {
-              messageStore.messages.length = 0;
-              reply = '[OK] データをリセットしました';
+              reply = `[HELP] 利用可能なコマンド:\n- "統計" : メッセージ統計を表示\n- "ダッシュボード" : web上で統計を確認`;
             } else {
               reply = `[OK] "${userMessage}"というメッセージをありがとうございます！`;
             }
@@ -181,18 +205,23 @@ module.exports = async (req, res) => {
             const action = params.get('action');
 
             let reply = '';
+            let actionText = '';
             if (action === 'yes') {
-              messageStore.messages.push({ userId, text: 'はい', timestamp: new Date().toISOString() });
+              actionText = 'はい';
               reply = '[OK] ご協力ありがとうございます！「はい」を選択されました。';
             } else if (action === 'no') {
-              messageStore.messages.push({ userId, text: 'いいえ', timestamp: new Date().toISOString() });
+              actionText = 'いいえ';
               reply = '[INFO] 「いいえ」を選択されました。';
             } else if (action === 'save') {
-              messageStore.messages.push({ userId, text: '保存', timestamp: new Date().toISOString() });
+              actionText = '保存';
               reply = '[OK] データを保存しました';
             } else if (action === 'cancel') {
-              messageStore.messages.push({ userId, text: 'キャンセル', timestamp: new Date().toISOString() });
+              actionText = 'キャンセル';
               reply = '[CANCEL] 処理をキャンセルしました';
+            }
+
+            if (actionText) {
+              await addMessageToSheets(userId, actionText, 'postback');
             }
 
             if (reply) await sendMessage(userId, reply);
