@@ -6,8 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "test": "node src/test.js",
-    "build": "cd web && npm run build && cd .."
+    "test": "node src/test.js"
   },
   "keywords": ["LINE", "Messaging API"],
   "author": "Fly0KUBOKI",
