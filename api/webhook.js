@@ -73,14 +73,26 @@ module.exports = async (req, res) => {
     const signature = req.headers['x-line-signature'];
     let body = req.body;
 
+    console.log(`[WEBHOOK] Received POST request`);
+    console.log(`[WEBHOOK] signature: ${signature}`);
+    console.log(`[WEBHOOK] body type: ${typeof body}`);
+    console.log(`[WEBHOOK] LINE_WEBHOOK_SECRET exists: ${!!process.env.LINE_WEBHOOK_SECRET}`);
+
+    // req.body を適切に処理
+    if (!body) {
+      console.error('[WEBHOOK] No body received');
+      res.status(400).json({ error: 'No body' });
+      return;
+    }
+
     // req.body は Vercel で既に JSON パースされているため、文字列に変換
     if (typeof body === 'object') {
       body = JSON.stringify(body);
-    } else if (!body) {
-      body = '';
+    } else if (typeof body !== 'string') {
+      body = String(body);
     }
 
-    console.log(`[WEBHOOK] Received request, signature check...`);
+    console.log(`[WEBHOOK] body string length: ${body.length}`);
 
     // 署名検証
     if (!validateSignature(body, signature)) {
@@ -91,6 +103,7 @@ module.exports = async (req, res) => {
 
     try {
       const events = JSON.parse(body).events || [];
+      console.log(`[WEBHOOK] Parsed ${events.length} events`);
 
       // 即座に 200 OK を返す
       res.status(200).json({ status: 'ok' });
@@ -163,8 +176,12 @@ module.exports = async (req, res) => {
       });
 
     } catch (error) {
-      console.error('❌ エラーが発生しました:', error);
-      res.status(500).json({ error: 'Internal Server Error' });
+      console.error('❌ エラーが発生しました:', error.message);
+      console.error('Stack:', error.stack);
+      // 既に 200 を返している場合は res.status を変更できないため、ここでは何もしない
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Internal Server Error', message: error.message });
+      }
     }
     return;
   }
