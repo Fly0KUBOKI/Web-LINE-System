@@ -1,67 +1,7 @@
 const crypto = require('crypto');
-const { google } = require('googleapis');
 
-let sheetsClient = null;
-
-async function initializeSheets() {
-  if (sheetsClient) return sheetsClient;
-
-  try {
-    const serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON || '{}');
-
-    if (!serviceAccount.type) {
-      console.warn('[SHEETS] Service account not configured');
-      return null;
-    }
-
-    const auth = new google.auth.GoogleAuth({
-      credentials: serviceAccount,
-      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-    });
-
-    sheetsClient = google.sheets({ version: 'v4', auth });
-    console.log('[SHEETS] Initialized successfully');
-    return sheetsClient;
-  } catch (error) {
-    console.error('[SHEETS] Initialization error:', error.message);
-    return null;
-  }
-}
-
-async function addMessageToSheets(userId, text, messageType = 'text') {
-  try {
-    const sheets = await initializeSheets();
-    if (!sheets) {
-      console.warn('[SHEETS] Sheets not initialized');
-      return false;
-    }
-
-    const sheetId = process.env.GOOGLE_SHEETS_ID;
-    if (!sheetId) {
-      console.warn('[SHEETS] GOOGLE_SHEETS_ID not set');
-      return false;
-    }
-
-    const timestamp = new Date().toLocaleString('ja-JP', {
-      timeZone: 'Asia/Tokyo',
-    });
-
-    const values = [[timestamp, userId, messageType, text]];
-
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: sheetId,
-      range: 'Sheet1!A:D',
-      valueInputOption: 'USER_ENTERED',
-      resource: { values },
-    });
-
-    console.log(`[SHEETS] Message recorded: ${userId} - ${text}`);
-    return true;
-  } catch (error) {
-    console.error('[SHEETS] Error adding message:', error.message);
-    return false;
-  }
-}
+// Google Apps Script のウェブアプリケーション URL
+const GAS_URL = process.env.GAS_DEPLOYMENT_URL;
 
 // Webhook署名の検証
 function validateSignature(body, signature) {
@@ -181,7 +121,22 @@ module.exports = async (req, res) => {
             console.log(`ユーザー: ${userId}`);
             console.log(`メッセージ: ${userMessage}`);
 
-            await addMessageToSheets(userId, userMessage, 'text');
+            // GAS にメッセージを送信
+            if (GAS_URL) {
+              try {
+                await fetch(GAS_URL, {
+                  method: 'POST',
+                  body: JSON.stringify({
+                    userId,
+                    text: userMessage,
+                    messageType: 'text'
+                  }),
+                  headers: { 'Content-Type': 'application/json' }
+                });
+              } catch (error) {
+                console.error('GAS 送信エラー:', error.message);
+              }
+            }
 
             let reply = '';
             if (userMessage.includes('統計') || userMessage.includes('分析')) {
@@ -220,8 +175,20 @@ module.exports = async (req, res) => {
               reply = '[CANCEL] 処理をキャンセルしました';
             }
 
-            if (actionText) {
-              await addMessageToSheets(userId, actionText, 'postback');
+            if (actionText && GAS_URL) {
+              try {
+                await fetch(GAS_URL, {
+                  method: 'POST',
+                  body: JSON.stringify({
+                    userId,
+                    text: actionText,
+                    messageType: 'postback'
+                  }),
+                  headers: { 'Content-Type': 'application/json' }
+                });
+              } catch (error) {
+                console.error('GAS 送信エラー:', error.message);
+              }
             }
 
             if (reply) await sendMessage(userId, reply);

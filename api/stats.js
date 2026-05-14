@@ -1,88 +1,4 @@
-const { google } = require('googleapis');
-
-let sheetsClient = null;
-
-async function initializeSheets() {
-  if (sheetsClient) return sheetsClient;
-
-  try {
-    const serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON || '{}');
-
-    if (!serviceAccount.type) {
-      return null;
-    }
-
-    const auth = new google.auth.GoogleAuth({
-      credentials: serviceAccount,
-      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-    });
-
-    sheetsClient = google.sheets({ version: 'v4', auth });
-    return sheetsClient;
-  } catch (error) {
-    console.error('[SHEETS] Initialization error:', error.message);
-    return null;
-  }
-}
-
-async function getStatsFromSheets() {
-  try {
-    const sheets = await initializeSheets();
-    if (!sheets) return null;
-
-    const sheetId = process.env.GOOGLE_SHEETS_ID;
-    if (!sheetId) return null;
-
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: sheetId,
-      range: 'Sheet1!A:D',
-    });
-
-    const rows = response.data.values || [];
-
-    const messages = rows.slice(1).map(row => ({
-      timestamp: row[0],
-      userId: row[1],
-      type: row[2],
-      text: row[3],
-    }));
-
-    const totalMessages = messages.length;
-    const uniqueUsers = new Set(messages.map(m => m.userId)).size;
-    const totalLength = messages.reduce((sum, m) => sum + (m.text ? m.text.length : 0), 0);
-    const averageLength = totalMessages > 0 ? Math.round(totalLength / totalMessages * 10) / 10 : 0;
-
-    const userStats = [];
-    messages.forEach(msg => {
-      let userStat = userStats.find(u => u.userId === msg.userId);
-      if (!userStat) {
-        userStat = {
-          userId: msg.userId,
-          messageCount: 0,
-          messages: []
-        };
-        userStats.push(userStat);
-      }
-      userStat.messageCount++;
-      userStat.messages.push({
-        text: msg.text,
-        timestamp: msg.timestamp,
-        type: msg.type
-      });
-    });
-
-    return {
-      totalMessages,
-      uniqueUsers,
-      totalLength,
-      averageLength,
-      userStats
-    };
-  } catch (error) {
-    console.error('[SHEETS] Error getting stats:', error.message);
-    return null;
-  }
-}
+const GAS_URL = process.env.GAS_DEPLOYMENT_URL;
 
 module.exports = async (req, res) => {
   // CORS ヘッダー
@@ -96,11 +12,23 @@ module.exports = async (req, res) => {
   }
 
   if (req.method === 'GET') {
-    const stats = await getStatsFromSheets();
+    if (!GAS_URL) {
+      res.status(200).json({
+        totalMessages: 0,
+        uniqueUsers: 0,
+        totalLength: 0,
+        averageLength: 0,
+        userStats: []
+      });
+      return;
+    }
 
-    if (stats) {
+    try {
+      const response = await fetch(GAS_URL);
+      const stats = await response.json();
       res.status(200).json(stats);
-    } else {
+    } catch (error) {
+      console.error('[STATS] Error fetching from GAS:', error.message);
       res.status(200).json({
         totalMessages: 0,
         uniqueUsers: 0,
