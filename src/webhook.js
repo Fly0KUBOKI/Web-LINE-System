@@ -32,8 +32,15 @@ async function sendMessage(userId, text) {
   }
 }
 
-// Vercel Serverless Function のメインハンドラー
-module.exports = async (req, res) => {
+// HTTP response のヘルパー
+function sendJson(res, statusCode, data) {
+  res.statusCode = statusCode;
+  res.setHeader('Content-Type', 'application/json');
+  res.end(JSON.stringify(data));
+}
+
+// Vercel Serverless Function / ローカルサーバー両対応ハンドラー
+async function handler(req, res) {
   // CORS ヘッダー
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
@@ -41,21 +48,22 @@ module.exports = async (req, res) => {
 
   // OPTIONS リクエスト対応
   if (req.method === 'OPTIONS') {
-    res.status(200).end();
+    res.statusCode = 200;
+    res.end();
     return;
   }
 
   // GET リクエスト対応（ヘルスチェック）
   if (req.method === 'GET') {
     if (req.url === '/health') {
-      res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+      sendJson(res, 200, { status: 'ok', timestamp: new Date().toISOString() });
       return;
     }
     if (req.url === '/stats') {
-      res.status(200).json(analyzer.getSummary());
+      sendJson(res, 200, analyzer.getSummary());
       return;
     }
-    res.status(404).json({ error: 'Not Found' });
+    sendJson(res, 404, { error: 'Not Found' });
     return;
   }
 
@@ -74,7 +82,7 @@ module.exports = async (req, res) => {
     // 署名検証
     if (!validateSignature(body, signature)) {
       console.warn('❌ 無効な署名です');
-      res.status(401).json({ error: 'Unauthorized' });
+      sendJson(res, 401, { error: 'Unauthorized' });
       return;
     }
 
@@ -82,7 +90,7 @@ module.exports = async (req, res) => {
       const events = JSON.parse(body).events || [];
 
       // イベント処理は非同期で実行（即座に 200 を返す）
-      res.status(200).json({ status: 'ok' });
+      sendJson(res, 200, { status: 'ok' });
 
       // イベント処理（Promise チェーンで並列実行）
       (async () => {
@@ -152,21 +160,21 @@ module.exports = async (req, res) => {
 
     } catch (error) {
       console.error('❌ エラーが発生しました:', error);
-      if (!res.headersSent) {
-        res.status(500).json({ error: 'Internal Server Error' });
-      }
+      sendJson(res, 500, { error: 'Internal Server Error' });
     }
     return;
   }
 
   // その他のリクエスト
-  res.status(404).json({ error: 'Not Found' });
-};
+  sendJson(res, 404, { error: 'Not Found' });
+}
+
+// Vercel Serverless Function のエクスポート
+module.exports = handler;
 
 // ローカル実行用（開発環境）
 if (require.main === module) {
   const http = require('http');
-  const handler = module.exports;
 
   const server = http.createServer((req, res) => {
     // raw body を取得するためのカスタム処理
