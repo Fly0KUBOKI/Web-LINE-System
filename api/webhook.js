@@ -46,8 +46,37 @@ async function sendMessage(userId, text) {
   }
 }
 
-// シンプルなメッセージストア（本番環境では適切なDBを使用してください）
-const messageStore = [];
+// メッセージストア（複数の API 間で共有）
+// NOTE: 本番環境ではこのメモリベースのストアではなく、データベースを使用してください
+const messageStore = {
+  messages: [],
+  getStats: function() {
+    const totalMessages = this.messages.length;
+    const uniqueUsers = new Set(this.messages.map(m => m.userId)).size;
+    const totalLength = this.messages.reduce((sum, m) => sum + m.text.length, 0);
+    const averageLength = totalMessages > 0 ? Math.round(totalLength / totalMessages * 10) / 10 : 0;
+
+    const userStats = [];
+    this.messages.forEach(msg => {
+      let userStat = userStats.find(u => u.userId === msg.userId);
+      if (!userStat) {
+        userStat = {
+          userId: msg.userId,
+          messageCount: 0,
+          messages: []
+        };
+        userStats.push(userStat);
+      }
+      userStat.messageCount++;
+      userStat.messages.push({
+        text: msg.text,
+        timestamp: msg.timestamp
+      });
+    });
+
+    return { totalMessages, uniqueUsers, totalLength, averageLength, userStats };
+  }
+};
 
 // Vercel API route handler
 module.exports = async (req, res) => {
@@ -120,17 +149,20 @@ module.exports = async (req, res) => {
             console.log(`ユーザー: ${userId}`);
             console.log(`メッセージ: ${userMessage}`);
 
-            messageStore.push({ userId, text: userMessage, timestamp: new Date() });
+            messageStore.messages.push({
+              userId,
+              text: userMessage,
+              timestamp: new Date().toISOString()
+            });
 
             let reply = '';
             if (userMessage.includes('統計') || userMessage.includes('分析')) {
-              const uniqueUsers = new Set(messageStore.map(m => m.userId)).size;
-              const totalLength = messageStore.reduce((sum, m) => sum + m.text.length, 0);
-              reply = `[STATS] 統計情報:\n総メッセージ数: ${messageStore.length}\nユーザー数: ${uniqueUsers}\n総文字数: ${totalLength}`;
+              const stats = messageStore.getStats();
+              reply = `[STATS] 統計情報:\n総メッセージ数: ${stats.totalMessages}\nユーザー数: ${stats.uniqueUsers}\n総文字数: ${stats.totalLength}`;
             } else if (userMessage.includes('ヘルプ')) {
               reply = `[HELP] 利用可能なコマンド:\n- "統計" : メッセージ統計を表示\n- "リセット" : データをリセット`;
             } else if (userMessage.includes('リセット')) {
-              messageStore.length = 0;
+              messageStore.messages.length = 0;
               reply = '[OK] データをリセットしました';
             } else {
               reply = `[OK] "${userMessage}"というメッセージをありがとうございます！`;
@@ -150,16 +182,16 @@ module.exports = async (req, res) => {
 
             let reply = '';
             if (action === 'yes') {
-              messageStore.push({ userId, text: 'はい', timestamp: new Date() });
+              messageStore.messages.push({ userId, text: 'はい', timestamp: new Date().toISOString() });
               reply = '[OK] ご協力ありがとうございます！「はい」を選択されました。';
             } else if (action === 'no') {
-              messageStore.push({ userId, text: 'いいえ', timestamp: new Date() });
+              messageStore.messages.push({ userId, text: 'いいえ', timestamp: new Date().toISOString() });
               reply = '[INFO] 「いいえ」を選択されました。';
             } else if (action === 'save') {
-              messageStore.push({ userId, text: '保存', timestamp: new Date() });
+              messageStore.messages.push({ userId, text: '保存', timestamp: new Date().toISOString() });
               reply = '[OK] データを保存しました';
             } else if (action === 'cancel') {
-              messageStore.push({ userId, text: 'キャンセル', timestamp: new Date() });
+              messageStore.messages.push({ userId, text: 'キャンセル', timestamp: new Date().toISOString() });
               reply = '[CANCEL] 処理をキャンセルしました';
             }
 
