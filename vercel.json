@@ -1,19 +1,6 @@
 {
   "version": 2,
-  "public": true,
-  "buildCommand": "true",
-  "outputDirectory": "public",
   "github": {
     "protected": false
-  },
-  "routes": [
-    {
-      "src": "/api/.*",
-      "dest": "/api/$1"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "/public/index.html"
-    }
-  ]
+  }
 }
