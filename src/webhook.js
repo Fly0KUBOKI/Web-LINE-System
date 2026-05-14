@@ -8,13 +8,22 @@ const app = express();
 const client = new LineClient(process.env.LINE_CHANNEL_ACCESS_TOKEN);
 const analyzer = new DataAnalyzer();
 
-app.use(express.json());
+// Don't use global JSON parser - we need raw body for webhook signature validation
 
 // Webhook署名の検証
 function validateSignature(body, signature) {
+  // Convert buffer to string if needed
+  let bodyStr;
+  if (typeof body === 'string') {
+    bodyStr = body;
+  } else if (Buffer.isBuffer(body)) {
+    bodyStr = body.toString('utf-8');
+  } else {
+    bodyStr = JSON.stringify(body);
+  }
   const hash = crypto
     .createHmac('sha256', process.env.LINE_WEBHOOK_SECRET)
-    .update(body)
+    .update(bodyStr)
     .digest('base64');
   return hash === signature;
 }
@@ -23,6 +32,7 @@ function validateSignature(body, signature) {
 app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   const signature = req.headers['x-line-signature'];
   const body = req.body;
+  const bodyStr = typeof body === 'string' ? body : (Buffer.isBuffer(body) ? body.toString('utf-8') : JSON.stringify(body));
 
   // 署名検証
   if (!validateSignature(body, signature)) {
@@ -31,7 +41,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
   }
 
   try {
-    const events = JSON.parse(body).events;
+    const events = JSON.parse(bodyStr).events;
 
     for (const event of events) {
       console.log('\n📩 イベント受信:', event.type);

@@ -2,10 +2,10 @@
   "name": "web-line-system",
   "version": "1.0.0",
   "description": "LINE Messaging API Dashboard",
-  "main": "server.js",
+  "main": "src/webhook.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node server.js",
+    "start": "node src/webhook.js",
+    "dev": "node src/webhook.js",
     "test": "node src/test.js"
   },
   "keywords": ["LINE", "Messaging API"],
@@ -13,6 +13,7 @@
   "license": "MIT",
   "dependencies": {
     "express": "^4.18.2",
-    "dotenv": "^16.3.1"
+    "dotenv": "^16.3.1",
+    "axios": "^1.6.0"
   }
 }

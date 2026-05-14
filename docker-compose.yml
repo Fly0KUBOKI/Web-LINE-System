@@ -12,7 +12,7 @@ services:
     volumes:
       - ./src:/app/src
       - ./logs:/app/logs
-    command: npm run webhook
+    command: npm start
     restart: unless-stopped
 
   # Python: データ解析・スクリプト実行
