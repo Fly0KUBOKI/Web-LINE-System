@@ -1,18 +1,13 @@
 require('dotenv').config();
-const express = require('express');
 const LineClient = require('./lineClient');
 const DataAnalyzer = require('./dataAnalyzer');
 const crypto = require('crypto');
 
-const app = express();
 const client = new LineClient(process.env.LINE_CHANNEL_ACCESS_TOKEN);
 const analyzer = new DataAnalyzer();
 
-// Don't use global JSON parser - we need raw body for webhook signature validation
-
 // Webhook署名の検証
 function validateSignature(body, signature) {
-  // Convert buffer to string if needed
   let bodyStr;
   if (typeof body === 'string') {
     bodyStr = body;
@@ -28,131 +23,170 @@ function validateSignature(body, signature) {
   return hash === signature;
 }
 
-// Webhookエンドポイント
-app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
-  const signature = req.headers['x-line-signature'];
-  const body = req.body;
-  const bodyStr = typeof body === 'string' ? body : (Buffer.isBuffer(body) ? body.toString('utf-8') : JSON.stringify(body));
+// LINE メッセージ送信
+async function sendMessage(userId, text) {
+  try {
+    await client.sendTextMessage(userId, text);
+  } catch (error) {
+    console.error('メッセージ送信エラー:', error.message);
+  }
+}
 
-  // 署名検証
-  if (!validateSignature(body, signature)) {
-    console.warn('❌ 無効な署名です');
-    return res.status(401).send('Unauthorized');
+// Vercel Serverless Function のメインハンドラー
+module.exports = async (req, res) => {
+  // CORS ヘッダー
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Line-Signature');
+
+  // OPTIONS リクエスト対応
+  if (req.method === 'OPTIONS') {
+    res.status(200).end();
+    return;
   }
 
-  try {
-    const events = JSON.parse(bodyStr).events;
+  // GET リクエスト対応（ヘルスチェック）
+  if (req.method === 'GET') {
+    if (req.url === '/health') {
+      res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+      return;
+    }
+    if (req.url === '/stats') {
+      res.status(200).json(analyzer.getSummary());
+      return;
+    }
+    res.status(404).json({ error: 'Not Found' });
+    return;
+  }
 
-    for (const event of events) {
-      console.log('\n📩 イベント受信:', event.type);
+  // Webhook リクエスト処理
+  if (req.method === 'POST' && req.url === '/webhook') {
+    const signature = req.headers['x-line-signature'];
+    let body = req.body;
 
-      if (event.type === 'message' && event.message.type === 'text') {
-        const userId = event.source.userId;
-        const userMessage = event.message.text;
-
-        console.log(`ユーザー: ${userId}`);
-        console.log(`メッセージ: ${userMessage}`);
-
-        // メッセージを分析データに記録
-        analyzer.recordMessage(userId, userMessage);
-
-        // キーワードに応じた処理
-        if (userMessage.includes('統計') || userMessage.includes('分析')) {
-          const summary = analyzer.getSummary();
-          await client.sendTextMessage(
-            userId,
-            `[STATS] 統計情報:\n総メッセージ数: ${summary.totalMessages}\nユーザー数: ${summary.uniqueUsers}\n総文字数: ${summary.totalLength}`
-          );
-        } else if (userMessage.includes('ヘルプ') || userMessage.includes('help')) {
-          const helpMessage = `[HELP] 利用可能なコマンド:
-- "統計" または "分析" : メッセージ統計を表示
-- "リセット" : データをリセット
-- その他のテキスト : エコーバック`;
-          await client.sendTextMessage(userId, helpMessage);
-        } else if (userMessage.includes('リセット')) {
-          analyzer.reset();
-          await client.sendTextMessage(userId, '[OK] データをリセットしました');
-        } else {
-          // 通常のテキスト応答
-          const replyMessage = `[OK] "${userMessage}"というメッセージをありがとうございます！`;
-          await client.sendTextMessage(userId, replyMessage);
-        }
-
-      } else if (event.type === 'postback') {
-        const userId = event.source.userId;
-        const postbackData = event.postback.data;
-
-        console.log(`ユーザー: ${userId}`);
-        console.log(`ボタン応答データ: ${postbackData}`);
-
-        // postback data を解析（format: action=value&key=value）
-        const params = new URLSearchParams(postbackData);
-        const action = params.get('action');
-
-        // ボタン応答ラベルをメッセージとして記録
-        let displayLabel = postbackData;
-        if (action === 'yes') {
-          displayLabel = 'はい';
-          analyzer.recordMessage(userId, displayLabel);
-          await client.sendTextMessage(userId, '[OK] ご協力ありがとうございます！「はい」を選択されました。');
-        } else if (action === 'no') {
-          displayLabel = 'いいえ';
-          analyzer.recordMessage(userId, displayLabel);
-          await client.sendTextMessage(userId, '[INFO] 「いいえ」を選択されました。何かお困りですか？');
-        } else if (action === 'save') {
-          displayLabel = '保存';
-          analyzer.recordMessage(userId, displayLabel);
-          await client.sendTextMessage(userId, '[OK] データを保存しました');
-        } else if (action === 'cancel') {
-          displayLabel = 'キャンセル';
-          analyzer.recordMessage(userId, displayLabel);
-          await client.sendTextMessage(userId, '[CANCEL] 処理をキャンセルしました');
-        } else {
-          analyzer.recordMessage(userId, displayLabel);
-          await client.sendTextMessage(userId, `[OK] ボタン応答を受け取りました`);
-        }
-
-      } else if (event.type === 'follow') {
-        const userId = event.source.userId;
-        console.log(`ユーザーがフォローしました: ${userId}`);
-        await client.sendTextMessage(
-          userId,
-          'ようこそ！このボットはLINE Messaging APIのテストプログラムです。'
-        );
-
-      } else if (event.type === 'unfollow') {
-        console.log('ユーザーがフォロー解除しました');
-
-      } else if (event.type === 'join') {
-        console.log('グループに参加しました');
-      }
+    // Vercel では body が既に JSON パースされているため、文字列に変換
+    if (typeof body === 'object') {
+      body = JSON.stringify(body);
+    } else if (!body) {
+      body = '';
     }
 
-    res.json({ status: 'ok' });
+    // 署名検証
+    if (!validateSignature(body, signature)) {
+      console.warn('❌ 無効な署名です');
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
 
-  } catch (error) {
-    console.error('❌ エラーが発生しました:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
+    try {
+      const events = JSON.parse(body).events || [];
+
+      // イベント処理は非同期で実行（即座に 200 を返す）
+      res.status(200).json({ status: 'ok' });
+
+      // イベント処理（Promise チェーンで並列実行）
+      (async () => {
+        for (const event of events) {
+          console.log('\n📩 イベント受信:', event.type);
+
+          if (event.type === 'message' && event.message?.type === 'text') {
+            const userId = event.source.userId;
+            const userMessage = event.message.text;
+
+            console.log(`ユーザー: ${userId}`);
+            console.log(`メッセージ: ${userMessage}`);
+
+            analyzer.recordMessage(userId, userMessage);
+
+            let reply = '';
+            if (userMessage.includes('統計') || userMessage.includes('分析')) {
+              const summary = analyzer.getSummary();
+              reply = `[STATS] 統計情報:\n総メッセージ数: ${summary.totalMessages}\nユーザー数: ${summary.uniqueUsers}\n総文字数: ${summary.totalLength}`;
+            } else if (userMessage.includes('ヘルプ')) {
+              reply = `[HELP] 利用可能なコマンド:\n- "統計" : メッセージ統計を表示\n- "リセット" : データをリセット`;
+            } else if (userMessage.includes('リセット')) {
+              analyzer.reset();
+              reply = '[OK] データをリセットしました';
+            } else {
+              reply = `[OK] "${userMessage}"というメッセージをありがとうございます！`;
+            }
+
+            if (reply) await sendMessage(userId, reply);
+
+          } else if (event.type === 'postback') {
+            const userId = event.source.userId;
+            const postbackData = event.postback.data;
+
+            console.log(`ユーザー: ${userId}`);
+            console.log(`ボタン応答データ: ${postbackData}`);
+
+            const params = new URLSearchParams(postbackData);
+            const action = params.get('action');
+
+            let reply = '';
+            if (action === 'yes') {
+              analyzer.recordMessage(userId, 'はい');
+              reply = '[OK] ご協力ありがとうございます！「はい」を選択されました。';
+            } else if (action === 'no') {
+              analyzer.recordMessage(userId, 'いいえ');
+              reply = '[INFO] 「いいえ」を選択されました。';
+            } else if (action === 'save') {
+              analyzer.recordMessage(userId, '保存');
+              reply = '[OK] データを保存しました';
+            } else if (action === 'cancel') {
+              analyzer.recordMessage(userId, 'キャンセル');
+              reply = '[CANCEL] 処理をキャンセルしました';
+            }
+
+            if (reply) await sendMessage(userId, reply);
+
+          } else if (event.type === 'follow') {
+            const userId = event.source.userId;
+            console.log(`ユーザーがフォローしました: ${userId}`);
+            await sendMessage(userId, 'ようこそ！このボットはLINE Messaging APIのテストプログラムです。');
+          }
+        }
+      })().catch((error) => {
+        console.error('イベント処理エラー:', error);
+      });
+
+    } catch (error) {
+      console.error('❌ エラーが発生しました:', error);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Internal Server Error' });
+      }
+    }
+    return;
   }
-});
 
-// 健康チェックエンドポイント
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
+  // その他のリクエスト
+  res.status(404).json({ error: 'Not Found' });
+};
 
-// 統計情報エンドポイント
-app.get('/stats', (req, res) => {
-  res.json(analyzer.getSummary());
-});
+// ローカル実行用（開発環境）
+if (require.main === module) {
+  const http = require('http');
+  const handler = module.exports;
 
-// サーバーの起動
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`=`.repeat(50));
-  console.log(`🚀 LINE Webhook サーバーが起動しました`);
-  console.log(`   ポート: ${PORT}`);
-  console.log(`   Webhookエンドポイント: http://localhost:${PORT}/webhook`);
-  console.log(`   統計情報: http://localhost:${PORT}/stats`);
-  console.log(`=`.repeat(50));
-});
+  const server = http.createServer((req, res) => {
+    // raw body を取得するためのカスタム処理
+    let body = '';
+    req.on('data', (chunk) => {
+      body += chunk.toString();
+    });
+    req.on('end', async () => {
+      req.body = body;
+      await handler(req, res);
+    });
+  });
+
+  const PORT = process.env.PORT || 3000;
+  server.listen(PORT, () => {
+    console.log(`=`.repeat(50));
+    console.log(`🚀 LINE Webhook サーバーが起動しました`);
+    console.log(`   ポート: ${PORT}`);
+    console.log(`   Webhookエンドポイント: http://localhost:${PORT}/webhook`);
+    console.log(`   統計情報: http://localhost:${PORT}/stats`);
+    console.log(`=`.repeat(50));
+  });
+}
