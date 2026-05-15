@@ -79,6 +79,8 @@ module.exports = async (req, res) => {
     console.log(`[WEBHOOK] signature: ${signature}`);
     console.log(`[WEBHOOK] body type: ${typeof body}`);
     console.log(`[WEBHOOK] LINE_WEBHOOK_SECRET exists: ${!!process.env.LINE_WEBHOOK_SECRET}`);
+    console.log(`[WEBHOOK] LINE_WEBHOOK_SECRET length: ${process.env.LINE_WEBHOOK_SECRET?.length || 0}`);
+    console.log(`[WEBHOOK] LINE_WEBHOOK_SECRET value: ${process.env.LINE_WEBHOOK_SECRET || 'NOT SET'}`);
 
     // req.body を適切に処理
     if (!body) {
