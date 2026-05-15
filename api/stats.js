@@ -1,4 +1,5 @@
 const GAS_URL = process.env.GAS_DEPLOYMENT_URL;
+const GAS_TOKEN = process.env.GAS_TOKEN || 'line_webhook_2025';
 
 module.exports = async (req, res) => {
   // CORS ヘッダー
@@ -24,7 +25,7 @@ module.exports = async (req, res) => {
     }
 
     try {
-      const response = await fetch(GAS_URL);
+      const response = await fetch(`${GAS_URL}?token=${GAS_TOKEN}`);
       const stats = await response.json();
       res.status(200).json(stats);
     } catch (error) {

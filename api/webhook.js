@@ -2,6 +2,7 @@ const crypto = require('crypto');
 
 // Google Apps Script のウェブアプリケーション URL
 const GAS_URL = process.env.GAS_DEPLOYMENT_URL;
+const GAS_TOKEN = process.env.GAS_TOKEN || 'line_webhook_2025';
 
 // Webhook署名の検証
 function validateSignature(body, signature) {
@@ -124,7 +125,7 @@ module.exports = async (req, res) => {
             // GAS にメッセージを送信
             if (GAS_URL) {
               try {
-                await fetch(GAS_URL, {
+                await fetch(`${GAS_URL}?token=${GAS_TOKEN}`, {
                   method: 'POST',
                   body: JSON.stringify({
                     userId,
@@ -177,7 +178,7 @@ module.exports = async (req, res) => {
 
             if (actionText && GAS_URL) {
               try {
-                await fetch(GAS_URL, {
+                await fetch(`${GAS_URL}?token=${GAS_TOKEN}`, {
                   method: 'POST',
                   body: JSON.stringify({
                     userId,
