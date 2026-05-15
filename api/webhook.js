@@ -122,18 +122,17 @@ module.exports = async (req, res) => {
             console.log(`ユーザー: ${userId}`);
             console.log(`メッセージ: ${userMessage}`);
 
-            // GAS にメッセージを送信
+            // GAS にメッセージを送信（GETで送信してPOSTリダイレクト問題を回避）
             if (GAS_URL) {
               try {
-                await fetch(`${GAS_URL}?token=${GAS_TOKEN}`, {
-                  method: 'POST',
-                  body: JSON.stringify({
-                    userId,
-                    text: userMessage,
-                    messageType: 'text'
-                  }),
-                  headers: { 'Content-Type': 'application/json' }
+                const params = new URLSearchParams({
+                  action: 'add',
+                  token: GAS_TOKEN,
+                  userId,
+                  text: userMessage,
+                  messageType: 'text'
                 });
+                await fetch(`${GAS_URL}?${params}`);
               } catch (error) {
                 console.error('GAS 送信エラー:', error.message);
               }
@@ -178,15 +177,14 @@ module.exports = async (req, res) => {
 
             if (actionText && GAS_URL) {
               try {
-                await fetch(`${GAS_URL}?token=${GAS_TOKEN}`, {
-                  method: 'POST',
-                  body: JSON.stringify({
-                    userId,
-                    text: actionText,
-                    messageType: 'postback'
-                  }),
-                  headers: { 'Content-Type': 'application/json' }
+                const params = new URLSearchParams({
+                  action: 'add',
+                  token: GAS_TOKEN,
+                  userId,
+                  text: actionText,
+                  messageType: 'postback'
                 });
+                await fetch(`${GAS_URL}?${params}`);
               } catch (error) {
                 console.error('GAS 送信エラー:', error.message);
               }
