@@ -97,6 +97,13 @@ module.exports = async (req, res) => {
     console.log(`[WEBHOOK] body string length: ${body.length}`);
 
     // 署名検証
+    const expectedSig = crypto
+      .createHmac('sha256', process.env.LINE_WEBHOOK_SECRET)
+      .update(body)
+      .digest('base64');
+    console.log(`[WEBHOOK] Expected sig: ${expectedSig}`);
+    console.log(`[WEBHOOK] Actual sig: ${signature}`);
+
     if (!validateSignature(body, signature)) {
       console.warn('❌ 無効な署名です');
       res.status(401).json({ error: 'Unauthorized' });
