@@ -53,12 +53,20 @@ function addMessage(params) {
   try {
     const sheet = SpreadsheetApp.getActiveSheet();
     const timestamp = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
-    sheet.appendRow([
-      timestamp,
-      params.userId || '',
-      params.messageType || 'text',
-      params.text || ''
-    ]);
+
+    // Base64エンコードされたテキストをデコード（文字化け防止）
+    let text = params.text || '';
+    if (params.encoded === '1') {
+      const decoded = Utilities.newBlob(Utilities.base64Decode(text)).getDataAsString('UTF-8');
+      text = decoded;
+    }
+
+    let userId = params.userId || '';
+    if (params.userIdEncoded === '1') {
+      userId = Utilities.newBlob(Utilities.base64Decode(userId)).getDataAsString('UTF-8');
+    }
+
+    sheet.appendRow([timestamp, userId, params.messageType || 'text', text]);
     return json({ status: 'success' });
   } catch (error) {
     return json({ status: 'error', message: error.toString() });

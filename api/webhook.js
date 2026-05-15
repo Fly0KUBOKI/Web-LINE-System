@@ -122,14 +122,16 @@ module.exports = async (req, res) => {
             console.log(`ユーザー: ${userId}`);
             console.log(`メッセージ: ${userMessage}`);
 
-            // GAS にメッセージを送信（GETで送信してPOSTリダイレクト問題を回避）
+            // GAS にメッセージを送信（Base64エンコードで文字化け防止）
             if (GAS_URL) {
               try {
                 const params = new URLSearchParams({
                   action: 'add',
                   token: GAS_TOKEN,
-                  userId,
-                  text: userMessage,
+                  userId: Buffer.from(userId, 'utf-8').toString('base64'),
+                  userIdEncoded: '1',
+                  text: Buffer.from(userMessage, 'utf-8').toString('base64'),
+                  encoded: '1',
                   messageType: 'text'
                 });
                 await fetch(`${GAS_URL}?${params}`);
@@ -180,8 +182,10 @@ module.exports = async (req, res) => {
                 const params = new URLSearchParams({
                   action: 'add',
                   token: GAS_TOKEN,
-                  userId,
-                  text: actionText,
+                  userId: Buffer.from(userId, 'utf-8').toString('base64'),
+                  userIdEncoded: '1',
+                  text: Buffer.from(actionText, 'utf-8').toString('base64'),
+                  encoded: '1',
                   messageType: 'postback'
                 });
                 await fetch(`${GAS_URL}?${params}`);
